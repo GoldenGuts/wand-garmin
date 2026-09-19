@@ -185,7 +185,9 @@ before the build. Without them, set both values in the Connect IQ phone app (app
 ```sh
 ./build.sh          # -> build/Wand.prg
 ./build.sh sim      # build and run in the simulator
-./build.sh iq       # -> build/Wand.iq (store package)
+./build.sh iq       # -> build/Wand.iq (store package, with your defaults baked in)
+./build.sh store    # -> build/Wand.iq with EMPTY defaults: the one to upload for other people
+./build.sh demo     # sample spots and devices in the simulator, for screenshots
 TYPECHECK=2 ./build.sh   # strict type check
 ```
 
@@ -202,7 +204,7 @@ START → scroll to "Wand".
 skips review and is hidden from search. This is your own upload under your own developer
 account. There is no official Wand listing.
 
-1. `./build.sh iq`.
+1. `./build.sh store` (never `iq` for an upload: `iq` bakes your webhook id into the file).
 2. Sign in at <https://apps.garmin.com/developer/upload>. Upload `build/Wand.iq`. Fill in the
    name, a description and a screenshot.
 3. On the version, choose **Beta**. Garmin shows a beta link.

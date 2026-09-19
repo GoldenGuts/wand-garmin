@@ -82,7 +82,10 @@ class Aim {
         var h = info.heading;
         var now = System.getTimer();
         var raw = null;
-        if (h != null) {
+        if (Store.demoHeading != null) {
+            raw = Store.demoHeading;
+            source = "fused";
+        } else if (h != null) {
             raw = Store.norm(Math.toDegrees(h).toFloat());
             source = "fused";
             _lastFused = now;

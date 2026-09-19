@@ -23,6 +23,7 @@ module Store {
     var bleNear as Number = -62;     // beacon RSSI stronger than this = the near spot (dBm)
     var bleFar as Number = -72;      // beacon RSSI weaker than this = the far spot (dBm)
     var lastSync as Number = 0;
+    var demoHeading as Float? = null; // fixed heading for simulator screenshots (Demo.mc), not saved
 
     const PRESET_NAMES = ["Couch", "Bed", "Desk", "Kitchen", "Dining", "Door", "Bathroom", "Balcony", "Hall", "TV"];
 

@@ -9,6 +9,13 @@ class WandApp extends Application.AppBase {
 
     function onStart(state as Dictionary?) as Void {
         Store.load();
+        if (self has :seedDemo) { seedDemo(); }
+    }
+
+    // Demo builds only (see Demo.mc): sample spots and devices for simulator screenshots.
+    (:demo)
+    function seedDemo() as Void {
+        Demo.seed();
     }
 
     function onStop(state as Dictionary?) as Void {

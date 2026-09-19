@@ -1,0 +1,2 @@
+# Demo build for simulator screenshots: same as monkey.jungle but keeps the (:demo) code.
+project.manifest = manifest.xml
