@@ -1,0 +1,5 @@
+<strings>
+    <string id="AppName">Wand</string>
+    <string id="SetHaUrl">Home Assistant URL</string>
+    <string id="SetWebhook">Webhook id</string>
+</strings>

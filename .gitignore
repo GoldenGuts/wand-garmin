@@ -1,0 +1,9 @@
+# local secrets: signing key and the HA webhook id
+developer_key.der
+developer_key.pem
+developer_key.*
+webhook_id.txt
+# build output and the generated properties file (holds the webhook id)
+build/
+resources/properties/
+.DS_Store

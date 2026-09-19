@@ -1,0 +1,8 @@
+<settings>
+    <setting propertyKey="@Properties.haUrl" title="@Strings.SetHaUrl">
+        <settingConfig type="alphaNumeric" />
+    </setting>
+    <setting propertyKey="@Properties.webhookId" title="@Strings.SetWebhook">
+        <settingConfig type="alphaNumeric" />
+    </setting>
+</settings>

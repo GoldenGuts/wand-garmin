@@ -1,0 +1,4 @@
+<properties>
+    <property id="haUrl" type="string">__HA_URL__</property>
+    <property id="webhookId" type="string">__WEBHOOK_ID__</property>
+</properties>

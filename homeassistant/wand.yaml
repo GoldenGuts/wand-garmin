@@ -1,0 +1,144 @@
+# Wand: point the Garmin watch at a device, flick the wrist (or press START), it toggles.
+#
+# Flow: watch (Connect IQ app "Wand", source in the repo root) -> phone (Garmin Connect)
+#       -> POST https://ha.example.com/api/webhook/<wand_webhook_id>
+#       -> this automation runs the right action for the entity's domain.
+#
+# Device list: the watch cannot use a long-lived token (no keyboard to type one), so the watch
+#       POSTs {"action":"sync"}; script.wand_sync renders every controllable entity plus the
+#       presence sensors and writes them (via bin/wand.py) to
+#       /config/www/wand/state-<webhook_id>.json. The watch then GETs
+#       /local/wand/state-<webhook_id>.json, which needs no auth: the webhook id in the file name
+#       is the only secret, so keep it long and random. LAN only if your reverse proxy restricts it.
+#
+# Secrets: wand_webhook_id in secrets.yaml. The watch build (webhook_id.txt) must use the same id.
+
+shell_command:
+  wand_write: "python3 /config/bin/wand.py {{ b64 }} {{ webhook_id }}"
+
+script:
+  wand_sync:
+    alias: "Wand · publish state"
+    mode: queued
+    max: 5
+    fields:
+      webhook_id:
+        description: "The webhook id the watch uses; it becomes part of the state file name."
+        example: "abc123"
+        required: true
+        selector:
+          text:
+    sequence:
+      - variables:
+          b64: >-
+            {%- set ns = namespace(d=[], p=[]) -%}
+            {%- set domains = ['light', 'switch', 'fan', 'media_player', 'cover', 'lock', 'scene',
+                               'script', 'input_boolean', 'button', 'climate', 'humidifier',
+                               'vacuum', 'siren', 'valve'] -%}
+            {#- Skip unavailable entities and this package's internal helper scripts (names with " · "). -#}
+            {%- for s in states if s.domain in domains and s.state != 'unavailable'
+                                  and not s.entity_id.startswith('script.wand')
+                                  and not (s.domain == 'script' and ' · ' in s.name) -%}
+              {%- set ns.d = ns.d + [[s.entity_id, s.name, s.state]] -%}
+            {%- endfor -%}
+            {%- for s in states.binary_sensor if s.attributes.device_class in ['occupancy','motion','presence'] -%}
+              {%- set ns.p = ns.p + [[s.entity_id, s.name, s.state]] -%}
+            {%- endfor -%}
+            {%- for s in states.person -%}
+              {%- set ns.p = ns.p + [[s.entity_id, s.name, s.state]] -%}
+            {%- endfor -%}
+            {%- for s in states.device_tracker -%}
+              {%- set ns.p = ns.p + [[s.entity_id, s.name, s.state]] -%}
+            {%- endfor -%}
+            {{ {'devices': ns.d, 'presence': ns.p, 'ts': now().timestamp() | int} | to_json | base64_encode }}
+      - action: shell_command.wand_write
+        data:
+          b64: "{{ b64 }}"
+          webhook_id: "{{ webhook_id }}"
+
+automation:
+  - id: wand_webhook
+    alias: "Wand · webhook"
+    description: "Watch -> HA. action: toggle|on|off|sync|ping. entity_id for toggle/on/off."
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret wand_webhook_id
+        allowed_methods: [POST]
+        local_only: true
+    variables:
+      act: "{{ trigger.json.action | default('toggle') }}"
+      entity: "{{ trigger.json.entity_id | default('') }}"
+      domain: "{{ entity.split('.')[0] if '.' in entity else '' }}"
+      from_spot: "{{ trigger.json.spot | default('') }}"
+      hook: "{{ trigger.webhook_id }}"
+    actions:
+      - choose:
+          - conditions: "{{ act == 'sync' }}"
+            sequence:
+              - action: script.wand_sync
+                data:
+                  webhook_id: "{{ hook }}"
+          - conditions: "{{ act == 'ping' }}"
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: wand_ping
+                  title: "Wand"
+                  message: "Watch connected at {{ now().strftime('%H:%M:%S') }}."
+              - action: script.wand_sync
+                data:
+                  webhook_id: "{{ hook }}"
+          - conditions: "{{ not (entity is match('^[a-z_]+\\.[a-z0-9_]+$')) or states(entity) in ['unknown', 'unavailable'] }}"
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: wand_error
+                  title: "Wand"
+                  message: "Unknown or unavailable entity: {{ entity or '(empty)' }}"
+          # Domains where homeassistant.toggle / turn_on / turn_off do the right thing.
+          - conditions: "{{ domain in ['light','switch','fan','input_boolean','media_player','humidifier','siren','valve','climate','water_heater','remote'] }}"
+            sequence:
+              - action: "homeassistant.{{ 'toggle' if act == 'toggle' else 'turn_' + act }}"
+                target: { entity_id: "{{ entity }}" }
+          - conditions: "{{ domain == 'cover' }}"
+            sequence:
+              - action: "cover.{{ 'toggle' if act == 'toggle' else ('open_cover' if act == 'on' else 'close_cover') }}"
+                target: { entity_id: "{{ entity }}" }
+          - conditions: "{{ domain == 'lock' }}"
+            sequence:
+              - action: "lock.{{ 'lock' if act == 'on' or (act == 'toggle' and not is_state(entity, 'locked')) else 'unlock' }}"
+                target: { entity_id: "{{ entity }}" }
+          - conditions: "{{ domain == 'vacuum' }}"
+            sequence:
+              - action: "vacuum.{{ 'start' if act == 'on' or (act == 'toggle' and not is_state(entity, 'cleaning')) else 'return_to_base' }}"
+                target: { entity_id: "{{ entity }}" }
+          - conditions: "{{ domain in ['scene', 'script'] }}"
+            sequence:
+              - action: "{{ domain }}.turn_on"
+                target: { entity_id: "{{ entity }}" }
+          - conditions: "{{ domain == 'button' }}"
+            sequence:
+              - action: button.press
+                target: { entity_id: "{{ entity }}" }
+        default:
+          - action: persistent_notification.create
+            data:
+              notification_id: wand_error
+              title: "Wand"
+              message: "No handler for {{ entity }} (action {{ act }})."
+      - event: wand_action
+        event_data:
+          action: "{{ act }}"
+          entity_id: "{{ entity }}"
+          spot: "{{ from_spot }}"
+      # Keep the state file fresh for the watch (states after the action, cheap).
+      - if:
+          - condition: template
+            value_template: "{{ act in ['toggle', 'on', 'off'] }}"
+        then:
+          - delay: { seconds: 1 }
+          - action: script.wand_sync
+            data:
+              webhook_id: "{{ hook }}"
