@@ -187,11 +187,21 @@ before the build. Without them, set both values in the Connect IQ phone app (app
 ./build.sh sim      # build and run in the simulator
 ./build.sh iq       # -> build/Wand.iq (store package, with your defaults baked in)
 ./build.sh store    # -> build/Wand.iq with EMPTY defaults: the one to upload for other people
+./build.sh release  # -> build/Wand-fr965.prg with EMPTY defaults, for a GitHub release
 ./build.sh demo     # sample spots and devices in the simulator, for screenshots
 TYPECHECK=2 ./build.sh   # strict type check
 ```
 
 ## Install
+
+**No SDK: download a build.** Each [GitHub release](https://github.com/GoldenGuts/wand-garmin/releases)
+has `Wand-fr965.prg`, built from the tagged commit with `./build.sh release`. It is for the
+Forerunner 965 only, and it has no Home Assistant URL and no webhook id inside. Copy it to the
+watch as described under "USB" below. Then set the URL and the webhook id: a sideloaded app does
+not show its settings in the Connect IQ phone app (only store apps do). Garmin Express on a
+computer can edit the settings of apps on the watch; if that does not work for you, build the
+app yourself with the values baked in (see "Build"). This is a binary from my machine: if you
+do not want to trust it, build from source and compare.
 
 **USB.** Plug the watch in, unlock it, wait a few seconds. Run `./install.sh` (needs
 `brew install libmtp` and `clang` from the Xcode command line tools). `./install.sh build`
