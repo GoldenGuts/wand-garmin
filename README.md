@@ -216,8 +216,10 @@ TYPECHECK=2 ./build.sh   # stricter Monkey C type checking
 
 ### A. USB sideload
 
-Fastest: plug the watch in, unlock it, run `./install.sh` (needs `brew install libmtp`;
-`./install.sh build` rebuilds first). By hand:
+Fastest: plug the watch in, unlock it, wait a few seconds, run `./install.sh` (needs
+`brew install libmtp` and the Xcode command line tools for `clang`; `./install.sh build`
+rebuilds first). It compiles `tools/mtpsend.c` once, because `mtp-sendfile` cannot resolve
+folder paths on the Forerunner. By hand:
 
 1. Plug the watch into the computer with its USB cable.
 2. Open OpenMTP (macOS) or Android File Transfer. The watch shows up as an MTP device.
@@ -382,7 +384,7 @@ unavailable entity …"; a domain with no handler creates "Wand · No handler fo
 | `resources/settings/settings.xml` | The two Connect IQ app settings: Home Assistant URL, Webhook id |
 | `resources/strings/strings.xml`, `resources/drawables/` | App name and launcher icon |
 | `properties.template.xml` | `haUrl` / `webhookId` defaults, filled in by `build.sh` at build time |
-| `build.sh`, `install.sh` | Build (`prg` / `sim` / `iq`) and USB sideload |
+| `build.sh`, `install.sh`, `tools/mtpsend.c` | Build (`prg` / `sim` / `iq`) and USB sideload (libmtp sender by folder id) |
 | `homeassistant/wand.yaml` | HA package: webhook automation, sync script, shell command |
 | `homeassistant/wand.py` | Writes `/config/www/wand/state-<id>.json` |
 | `esphome/beacon-example.yaml` | Optional: ESPHome BLE beacon for automatic spot detection |
