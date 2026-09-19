@@ -1,142 +1,124 @@
-# Wand — point your Garmin at a device, flick, it toggles
+# Wand
 
-Stand where you usually stand, raise your arm at a lamp, flick your wrist (or press START),
-and Home Assistant toggles it. Wand is a Connect IQ watch app: it learns which compass
-direction each device sits in from each place you use it, and on a flick it picks the device you
-are aiming at and fires a webhook. If it is not sure, it refuses and tells you why instead of
-guessing. One tap on the result screen corrects a wrong pick and teaches the app for next time.
+Point your Garmin at a device. Flick your wrist. Home Assistant toggles the device.
 
-Credit: this is a Connect IQ port of the idea from the Wear OS app **Snap Control**
-(r/homeassistant, Sep 2026) and the iOS app **Maestro Snap**. The Forerunner 965 has no
-microphone, so the finger snap of the originals becomes a **wrist flick** or the **START button**.
+Wand is a Connect IQ app for the Forerunner 965. It learns the compass direction of each device
+from each place you stand. On a flick, it picks the device you aim at and calls a webhook. If two
+devices are too close, it refuses and shows the reason. One key press corrects a wrong pick and
+teaches the app.
 
-> **Personal project — read this first**
->
-> I built Wand for my own watch and my own Home Assistant. I share the source because people
-> asked for it, not because it is a product. It is **not** on the Connect IQ Store and I do not
-> plan to publish it there. There is no support, no update channel, and no promise that it works
-> on any watch other than my Forerunner 965 with my firmware.
->
-> **Use it with caution.** The app fires real actions on real devices (lights, switches, locks,
-> covers, vacuums, scripts). A wrong match or a stray wrist flick can toggle the wrong thing.
-> Anyone on your LAN who knows the webhook id can do the same. Read the security notes below,
-> keep locks and anything dangerous out of the sync list if you are not comfortable with that,
-> and test with a lamp first. You build it, you sign it, you run it: it is your responsibility.
+Credit: the idea comes from the Wear OS app **Snap Control** (r/homeassistant, Sep 2026) and
+the iOS app **Maestro Snap**. The Forerunner 965 has no microphone. The finger snap becomes a
+wrist flick or the START button.
 
-Supported device: **Garmin Forerunner 965** (the only product in `manifest.xml`). Other Connect
-IQ 5.0+ watches with a compass and an accelerometer should work if you add them to
-`manifest.xml`, but that is untested.
+## Read this first
+
+This is a personal project. I built it for my watch and my Home Assistant. I share the source
+because people asked for it. It is not on the Connect IQ Store, and I will not publish it there.
+There is no support. I test it only on my Forerunner 965.
+
+Use it with caution. The app sends real commands to real devices: lights, switches, locks,
+covers, vacuums, scripts. A wrong match or a stray flick can toggle the wrong device. Anyone on
+your LAN with the webhook id can do the same. Test with a lamp first. Keep locks out of the
+sync list if you are not comfortable. You build it, you sign it, you run it.
+
+Supported device: Forerunner 965. Other Connect IQ 5.0+ watches with a compass and an
+accelerometer can work if you add them to `manifest.xml`. This is not tested.
 
 ## How it works
 
 ```
- Forerunner 965 ──BLE──▶ Garmin Connect (phone, on home Wi-Fi) ──HTTPS──▶ reverse proxy ──▶ Home Assistant
-   Wand app                                                        (Caddy)
-                                                                        POST /api/webhook/<id>      toggle · sync · ping
-                                                                        GET  /local/wand/state-<id>.json   device list
+watch ──BLE──▶ Garmin Connect (phone, home Wi-Fi) ──HTTPS──▶ reverse proxy ──▶ Home Assistant
+                                                              POST /api/webhook/<id>        toggle · sync · ping
+                                                              GET  /local/wand/state-<id>.json  device list
 ```
 
-**Spots.** A spot is a place you stand: Couch, Bed, Desk. Directions only make sense from a fixed
-place, so every painted device belongs to one spot. You switch spots with UP/DOWN, or let a
-presence sensor pick one (see below).
+**Spots.** A spot is a place you stand (Couch, Bed, Desk). Each painted device belongs to one
+spot. UP/DOWN changes the spot. A presence sensor or a BLE beacon can change it for you.
 
-**Painting.** To teach a device, you stand on the spot, point your arm at it, press START, and
-for 5 seconds lazily zigzag over the device, slightly past each edge. The app samples the compass
-at 10 Hz, takes the circular mean as the centre, and uses the 90th percentile of the angular
-spread (plus 3°, clamped to 5–60°) as the half-width. A percentile rather than the maximum means
-one compass glitch during the sweep cannot blow the arc up. The result is stored as
-`centre ± half`, for example `123° ±14°`, per (spot, device).
+**Painting.** Stand on the spot. Point your arm at the device. Press START. Zigzag over the
+device for 5 seconds. The app samples the compass at 10 Hz. The centre is the circular mean.
+The half-width is the 90th percentile of the spread plus 3°, limited to 5–60°. The app stores
+`centre ± half` per spot and device, for example `123° ±14°`.
 
-**Matching.** On a trigger, the app takes the current heading and scores every painted arc of the
-current spot: distance to the centre minus the half-width, so ≤ 0 means inside the arc. Arcs
-further out than **Range** (default +10°) are ignored. The best score wins, unless the runner-up
-is within **Separation** (default 15°): then the app refuses with `Lamp / Fan?` instead of
-guessing. Refusals buzz twice and show the reason on the main screen.
+**Matching.** On a trigger, the app scores each painted arc of the current spot: distance to
+the centre minus the half-width. A score of 0 or less means inside the arc. Arcs further out
+than **Range** (default 10°) do not count. The best score wins. If the second best is within
+**Separation** (default 15°), the app refuses and shows `Lamp / Fan?`. A refusal buzzes twice.
 
-**Correction that learns.** The result screen shows what was toggled. Press **DOWN** ("Wrong?
-DOWN to fix"), pick the device you meant. The app toggles the wrong device back, toggles the
-right one, and widens the right one's painted arc so it covers this heading next time.
+**Correction.** The result screen shows the toggled device. Press DOWN and pick the device you
+meant. The app toggles the wrong device back, toggles the right one, and widens its arc to
+include this heading.
 
-**Flick detection.** The accelerometer and gyroscope stream at 25 Hz. A flick is a jerk between
-two samples above the threshold for the chosen sensitivity (1600 / 1100 / 700 mG for Low /
-Medium / High), or any gyro axis above 500 / 340 / 220 °/s. Flicks closer than 1.5 s apart are
-ignored. The heading used is the one from about 300 ms *before* the flick, before the wrist
-moved, taken from a 3-second heading history.
+**Flick.** The accelerometer and gyroscope run at 25 Hz. A flick is a jerk above the threshold
+of the chosen sensitivity: 1600 / 1100 / 700 mG (Low / Medium / High), or a gyro axis above
+500 / 340 / 220 °/s. Flicks less than 1.5 s apart do not count. The app uses the heading from
+300 ms before the flick, before the wrist moved.
 
-**Compass.** The heading comes from `Sensor.Info.heading` (the fused compass). If the watch
-reports none for 3 seconds the app falls back to a tilt-compensated heading from the raw
-magnetometer and accelerometer; the main screen then shows "raw compass". That heading is not
-true north, but it is consistent, which is all the matching needs. Headings are smoothed over
-0.4 s for display and aiming.
+**Compass.** The heading comes from `Sensor.Info.heading`. If the watch gives none for 3 s, the
+app uses a tilt-compensated heading from the raw magnetometer. The main screen then shows
+"raw compass". This heading is not true north, but it is consistent. Headings are smoothed
+over 0.4 s.
 
-**Presence-linked spots.** Each spot can be linked to a presence sensor from HA (a `person`, a
-`device_tracker`, or an occupancy/motion/presence `binary_sensor`). When the app opens (at most
-once a minute) it re-syncs and jumps to the first spot whose sensor is `on` or `home`.
+**Presence spots.** A spot can link to a `person`, a `device_tracker`, or an occupancy, motion
+or presence `binary_sensor`. When the app opens, it syncs and jumps to the first spot with a
+sensor that is `on` or `home`. This runs at most once a minute.
 
-**Beacon-linked spots.** Or link two spots to a BLE beacon ("Beacon · near" / "Beacon · far"):
-an ESP32 running ESPHome next to one of the spots advertises a fixed service UUID, the watch
-listens for 3 s and picks the spot from the signal strength. See `esphome/beacon-example.yaml`.
+**Beacon spots.** A spot can link to "Beacon · near" or "Beacon · far". An ESP32 with ESPHome
+advertises a fixed BLE service UUID. The watch listens for 3 s and picks the spot from the
+signal strength. See `esphome/beacon-example.yaml`.
 
-## How the watch talks to Home Assistant
+## The watch and Home Assistant
 
-The watch never talks to HA directly. It hands the request to Garmin Connect on the phone over
-Bluetooth, and the phone makes the HTTPS call. The phone must be on the home Wi-Fi.
+The watch does not talk to HA. It sends the request to Garmin Connect on the phone over
+Bluetooth. The phone makes the HTTPS call. The phone must be on the home Wi-Fi.
 
-**Three actions**, all `POST https://ha.example.com/api/webhook/<id>` with a JSON body:
+All requests are `POST https://ha.example.com/api/webhook/<id>` with a JSON body:
 
-| Body | What HA does |
+| Body | HA action |
 |---|---|
-| `{"action":"toggle","entity_id":"light.desk","spot":"Desk"}` | Toggles the entity by domain (`homeassistant.toggle`, `cover.toggle`, `lock.lock`/`unlock`, `vacuum.start`/`return_to_base`, `scene.turn_on`, `script.turn_on`, `button.press`). Then republishes the state file. Fires the event `wand_action`. |
-| `{"action":"sync"}` | Renders the device list and writes the state file. |
-| `{"action":"ping"}` | Creates the persistent notification "Wand · Watch connected at HH:MM:SS", then syncs. |
+| `{"action":"toggle","entity_id":"light.desk","spot":"Desk"}` | Toggles the entity by domain. Republishes the state file. Fires the event `wand_action`. |
+| `{"action":"sync"}` | Writes the state file. |
+| `{"action":"ping"}` | Creates the notification "Wand · Watch connected at HH:MM:SS". Then syncs. |
 
-The webhook trigger uses `local_only: true`, so HA only accepts it from a LAN address. `on` and
-`off` also work as actions but the watch only sends `toggle`.
+The webhook has `local_only: true`. HA accepts it only from a LAN address. `on` and `off` also
+work, but the watch sends only `toggle`.
 
-**Why a webhook and not a long-lived token.** The watch has no keyboard to type a token into,
-and a token would give the watch (and anyone who reads the app settings) full API access. The
-webhook id only does what the automation allows, and only from the LAN.
+**Why a webhook.** The watch has no keyboard for a token. A token gives full API access. The
+webhook id does only what the automation allows, and only from the LAN.
 
-**The device list.** Webhook triggers cannot return a body, so the list goes the other way
-round. On `sync`, `script.wand_sync` renders every entity in the domains light, switch, fan,
-media_player, cover, lock, scene, script, input_boolean, button, climate, humidifier, vacuum,
-siren, valve (skipping `unavailable` ones), plus the presence sensors, and calls
-`/config/bin/wand.py`, which writes `/config/www/wand/state-<id>.json`. HA serves that folder
-without auth at `/local/…`, so 2.5 seconds after the POST the watch does
+**The device list.** A webhook cannot return a body. On `sync`, `script.wand_sync` collects the
+entities of these domains: light, switch, fan, media_player, cover, lock, scene, script,
+input_boolean, button, climate, humidifier, vacuum, siren, valve. It skips `unavailable`
+entities. It adds the presence sensors. `wand.py` writes `/config/www/wand/state-<id>.json`.
+HA serves this folder at `/local/` without auth. 2.5 s after the POST, the watch does
 `GET https://ha.example.com/local/wand/state-<id>.json`.
 
-**Why the id is in the file name.** `/local/` has no authentication at all, and the file lists
-your entities and who is home (`person.*`, `device_tracker.*` states). Putting the webhook id in
-the path makes it unguessable; the watch already knows the id, so nothing else is needed.
+**Why the id is in the file name.** `/local/` has no auth. The file lists your entities and who
+is home. The id in the path makes the file hard to guess.
 
-> **Security note.** Anyone on your LAN who knows the webhook id can toggle every listed entity,
-> including locks and covers, and can read the state file. Use a long random id, keep HA off the
-> public internet (the reference setup below does not need a port forward), and if you must
-> expose HA, restrict `/api/webhook/<id>` and `/local/wand/` to LAN addresses in the reverse
-> proxy.
+**Security.** Anyone on your LAN with the webhook id can toggle every listed entity and read the
+state file. Use a long random id. Keep HA off the public internet. If you must expose HA,
+limit `/api/webhook/<id>` and `/local/wand/` to LAN addresses in the reverse proxy.
 
 ## HTTPS is mandatory
 
-Garmin Connect IQ only allows `makeWebRequest` to **HTTPS** URLs with a certificate from a
-**public CA**. Plain `http://` and self-signed certificates fail with "HTTPS required" (code
--1001), and there is no way to add your own CA to the phone's Garmin app.
+Garmin Connect IQ allows `makeWebRequest` only to HTTPS URLs with a certificate from a public
+CA. Plain `http://` and self-signed certificates fail with "HTTPS required" (-1001). You cannot
+add your own CA to the Garmin phone app.
 
-The reference setup keeps HA on the LAN and still gets a real certificate:
+This setup keeps HA on the LAN and gets a real certificate:
 
-1. **A real domain** you control, with DNS on Cloudflare (any DNS provider Caddy has a plugin
-   for works).
-2. **Caddy** (or another reverse proxy) in front of HA, with a Let's Encrypt certificate obtained
-   through the **DNS-01 challenge**. Caddy proves ownership by creating a DNS TXT record via
-   the Cloudflare API, so **no port forward** and no inbound access are needed. A wildcard
-   certificate (`*.example.com`) covers every internal host.
-3. **The name resolves to the proxy's LAN IP.** Either an `A` record on Cloudflare with the
-   private IP (DNS only, not proxied), or a local DNS rewrite in AdGuard Home / Pi-hole so
-   `ha.example.com` → `192.168.1.10` inside the house.
-4. The phone is on the home Wi-Fi, so `https://ha.example.com` reaches Caddy, the certificate
-   is valid, and the request arrives at HA from a LAN address.
+1. A domain you own, with DNS on Cloudflare (or another provider with a Caddy plugin).
+2. Caddy in front of HA. Caddy gets a Let's Encrypt certificate with the DNS-01 challenge
+   through the Cloudflare API. No port forward is needed. A wildcard certificate
+   (`*.example.com`) covers all internal hosts.
+3. The name resolves to the LAN IP of the proxy. Use an `A` record with the private IP (DNS
+   only, not proxied), or a DNS rewrite in AdGuard Home or Pi-hole.
+4. The phone is on the home Wi-Fi. The request reaches Caddy, the certificate is valid, and HA
+   sees a LAN address.
 
-Minimal Caddyfile (needs a Caddy build with the `cloudflare` DNS module and
-`CLOUDFLARE_API_TOKEN` in the environment):
+Minimal Caddyfile (needs the `cloudflare` DNS module and `CLOUDFLARE_API_TOKEN`):
 
 ```caddyfile
 ha.example.com {
@@ -147,252 +129,213 @@ ha.example.com {
 }
 ```
 
-HA must trust the proxy so `local_only` sees the phone's LAN address instead of the proxy's.
-In `configuration.yaml`:
+HA must trust the proxy, or `local_only` sees the proxy address. In `configuration.yaml`:
 
 ```yaml
 http:
   use_x_forwarded_for: true
   trusted_proxies:
-    - 192.168.1.5        # the proxy's IP
+    - 192.168.1.5        # the proxy
 ```
 
 ## Home Assistant setup
 
-1. Copy `homeassistant/wand.yaml` to `/config/packages/wand.yaml`. If you do not use packages
-   yet, add this to `configuration.yaml`:
+1. Copy `homeassistant/wand.yaml` to `/config/packages/wand.yaml`. If you do not use packages,
+   add to `configuration.yaml`:
 
    ```yaml
    homeassistant:
      packages: !include_dir_named packages
    ```
 
-2. Copy `homeassistant/wand.py` to `/config/bin/wand.py` (the package's `shell_command` calls
-   `python3 /config/bin/wand.py`).
-3. Generate a webhook id and add it to `/config/secrets.yaml`:
+2. Copy `homeassistant/wand.py` to `/config/bin/wand.py`.
+3. Make a webhook id and add it to `/config/secrets.yaml`:
 
    ```sh
    echo "wand_webhook_id: $(head -c 48 /dev/urandom | base64 | tr -dc a-zA-Z0-9 | head -c 40)"
    ```
 
-   The id must match `^[A-Za-z0-9_-]{8,128}$` (it becomes a file name). Keep it: you will type
-   it into the watch app settings, or put it in `webhook_id.txt` for the build.
-4. Restart Home Assistant. Developer Tools → Actions → `script.wand_sync` with
-   `webhook_id: <your id>` should create `/config/www/wand/state-<id>.json`.
-5. Optional: `esphome/beacon-example.yaml` turns any ESP32 running ESPHome into a BLE beacon
-   for automatic spot detection (see "Beacon-linked spots" below). Nothing is needed in HA
+   The id must match `^[A-Za-z0-9_-]{8,128}$`. It becomes a file name.
+4. Restart HA. Test: Developer Tools → Actions → `script.wand_sync` with `webhook_id: <id>`.
+   This must create `/config/www/wand/state-<id>.json`.
+5. Optional: flash `esphome/beacon-example.yaml` on an ESP32 for beacon spots. HA needs nothing
    for it.
 
-## Build the watch app
+## Build
 
 Toolchain:
 
-* Connect IQ SDK 9.x (install with Garmin's SDK Manager; `build.sh` expects it at `~/ciq-sdk`,
-  override with `SDK=…`).
-* The **fr965** device files, downloaded once in the SDK Manager (Devices → Forerunner 965).
-* Java 17 (`brew install openjdk@17` on macOS; `build.sh` adds it to `PATH`).
+* Connect IQ SDK 9.x from the Garmin SDK Manager. `build.sh` expects it at `~/ciq-sdk`
+  (override with `SDK=…`).
+* The fr965 device files (SDK Manager → Devices → Forerunner 965).
+* Java 17 (`brew install openjdk@17`).
 
-Generate a developer key (once, kept out of git):
+Make a developer key once:
 
 ```sh
 openssl genrsa -out developer_key.pem 4096
 openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
 ```
 
-Optional defaults baked into the app: put your webhook id in `webhook_id.txt` and export
-`HA_URL=https://ha.example.com` before building. Without them the app starts unconfigured and
-you set both values in the Connect IQ phone app (Settings of the installed app: **Home Assistant
-URL** and **Webhook id**). `developer_key.*`, `webhook_id.txt`, `build/` and the generated
+Optional defaults: put the webhook id in `webhook_id.txt` and set `HA_URL=https://ha.example.com`
+before the build. Without them, set both values in the Connect IQ phone app (app settings:
+**Home Assistant URL**, **Webhook id**). `developer_key.*`, `webhook_id.txt`, `build/` and
 `resources/properties/` are git-ignored.
 
 ```sh
-./build.sh          # -> build/Wand.prg  (sideload)
-./build.sh sim      # build, start the simulator, run the app on a virtual fr965
-./build.sh iq       # -> build/Wand.iq   (signed release package for the Connect IQ Store)
-TYPECHECK=2 ./build.sh   # stricter Monkey C type checking
+./build.sh          # -> build/Wand.prg
+./build.sh sim      # build and run in the simulator
+./build.sh iq       # -> build/Wand.iq (store package)
+TYPECHECK=2 ./build.sh   # strict type check
 ```
 
-## Install on the watch
+## Install
 
-### A. USB sideload
+**USB.** Plug the watch in, unlock it, wait a few seconds. Run `./install.sh` (needs
+`brew install libmtp` and `clang` from the Xcode command line tools). `./install.sh build`
+rebuilds first. The script compiles `tools/mtpsend.c` once, because `mtp-sendfile` cannot
+resolve folder paths on the Forerunner. By hand: open OpenMTP or Android File Transfer, copy
+`build/Wand.prg` to `Internal Storage/GARMIN/Apps/` (or `GARMIN/APPS`), eject. On the watch:
+START → scroll to "Wand".
 
-Fastest: plug the watch in, unlock it, wait a few seconds, run `./install.sh` (needs
-`brew install libmtp` and the Xcode command line tools for `clang`; `./install.sh build`
-rebuilds first). It compiles `tools/mtpsend.c` once, because `mtp-sendfile` cannot resolve
-folder paths on the Forerunner. By hand:
+**Wireless.** Garmin has no wireless sideload. A private beta on the Connect IQ Store works. It
+skips review and is hidden from search. This is your own upload under your own developer
+account. There is no official Wand listing.
 
-1. Plug the watch into the computer with its USB cable.
-2. Open OpenMTP (macOS) or Android File Transfer. The watch shows up as an MTP device.
-3. Copy `build/Wand.prg` into `Internal Storage/GARMIN/Apps/` (some firmware: `GARMIN/APPS`; use
-   the folder that already holds `.prg` files).
-4. Eject and unplug. On the watch: **START → scroll to "Wand"**. Connect IQ apps sit in the
-   activity list; you can add it to the favourites via Settings → Activities & Apps.
+1. `./build.sh iq`.
+2. Sign in at <https://apps.garmin.com/developer/upload>. Upload `build/Wand.iq`. Fill in the
+   name, a description and a screenshot.
+3. On the version, choose **Beta**. Garmin shows a beta link.
+4. Open the link on the phone. It opens in the Connect IQ app. Tap **Install**.
 
-### B. Wireless, via a private Connect IQ Store beta
-
-Garmin has no wireless sideload, but a beta app on the store skips review, is hidden from
-search, and installs from the phone. This is a private upload under **your own** developer
-account for **your own** watch; there is no official Wand listing and there will not be one.
-
-1. `./build.sh iq` → `build/Wand.iq`.
-2. Sign in at <https://apps.garmin.com/developer/upload> (a free Garmin developer account) and
-   upload the `.iq`. Fill in name, description and a screenshot.
-3. On the app's version, choose **Beta**. Garmin shows a beta link.
-4. Open the beta link on the phone. It opens in the **Connect IQ** app. Tap **Install**. The watch
-   gets the app on the next Bluetooth sync. New versions update the same way.
-
-If you share the beta link, build **without** `webhook_id.txt` and `HA_URL`: the package would
-otherwise carry your id and URL. Each user then enters their own in the Connect IQ app settings.
+If you share the beta link, build without `webhook_id.txt` and `HA_URL`. Each user sets their
+own values in the app settings.
 
 ## First run
 
-1. Keep Garmin Connect open and paired on the phone, phone on the home Wi-Fi.
-2. If you did not bake in the defaults: in the Connect IQ phone app, open Wand → Settings and
-   fill **Home Assistant URL** (`https://ha.example.com`, no trailing slash needed) and
-   **Webhook id**.
-3. On the watch, hold **UP** (or tap the screen) → **Test connection**. The screen shows
-   "Pinging HA…", then "HA answered. Check the HA notification." and the watch buzzes once. HA
-   shows the notification "Wand · Watch connected at …".
-4. Menu → **Sync devices**. "Asking HA…" then "Synced N devices / M presence sensors".
-5. Menu → **Spots → + Add spot**. Pick a preset (Couch, Bed, Desk, Kitchen, Dining, Door,
-   Bathroom, Balcony, Hall, TV) or "Spot N". The spot menu opens.
-6. **Paint device here** (or Menu → **Paint device** for the current spot) → pick a device from
-   the list. Stand on the spot, raise your arm at the device, press **START** ("START = paint
-   5 s"), and zigzag over it for 5 seconds ("Sweep… 5"). "Saved" and a double buzz; the screen
-   shows the arc, e.g. `123° ±14°`. Repeat for every device from that spot; paint the same device
-   again from other spots.
-7. BACK to the main screen. The ring shows the painted arcs of the current spot, heading-up;
-   the arc you are aiming at turns green and the device name appears in the middle. **Flick**
-   the wrist or press **START** → one buzz → the result screen says "Toggled". It closes by
-   itself after 2.5 s.
+1. Keep Garmin Connect open on the phone. Phone on the home Wi-Fi.
+2. Set **Home Assistant URL** and **Webhook id** in the Connect IQ phone app, unless you baked
+   them in.
+3. On the watch, hold UP (or tap) → **Test connection**. The watch shows "HA answered." and
+   buzzes once. HA shows the notification "Wand · Watch connected".
+4. Menu → **Sync devices**. The watch shows "Synced N devices".
+5. Menu → **Spots → + Add spot**. Pick a name.
+6. **Paint device here** → pick a device. Stand on the spot. Aim. Press START. Zigzag over the
+   device for 5 s. The watch shows "Saved" and the arc, for example `123° ±14°`. Repeat for each
+   device. Paint the same device again from other spots.
+7. BACK to the main screen. The ring shows the arcs of the current spot. The arc you aim at
+   turns green. Flick or press START. The watch buzzes once and shows "Toggled".
 
-## Keys and screens
+## Keys
 
 Main screen:
 
 | Key | Action |
 |---|---|
-| START | Fire at the device you are aiming at |
-| Wrist flick | Same (when Trigger = START + wrist flick) |
+| START | Fire at the device you aim at |
+| Wrist flick | Same, if Trigger = START + wrist flick |
 | UP / DOWN | Previous / next spot |
-| Hold UP, or tap the screen | Menu |
-| BACK | Exit the app |
+| Hold UP, or tap | Menu |
+| BACK | Exit |
 
-A tap never fires a device, only opens the menu, so a brush of the touchscreen is safe.
+A tap opens the menu only. It never fires.
 
-Result screen (after a trigger): **DOWN** = "Wrong? DOWN to fix" → pick the device you meant;
-**START** = close now.
+Result screen: DOWN = pick the device you meant. START = close.
 
-Paint screen: **START** starts the 5-second sweep; **BACK** is ignored during the sweep.
+Menu: Paint device · Spots (+ Add spot; per spot: Use this spot, Paint device here, Presence
+sensor, Painted devices (select = delete), Delete spot) · Sync devices · Test connection ·
+Settings.
 
-Menu: **Paint device** · **Spots** (list, `+ Add spot`; each spot: Use this spot, Paint device
-here, Presence sensor, Painted devices (select = delete), Delete spot) · **Sync devices** ·
-**Test connection** · **Settings**.
-
-Settings:
+## Settings
 
 | Setting | Values (default in bold) |
 |---|---|
 | Trigger | START button only / **START + wrist flick** |
-| Flick sensitivity | Low (1600 mG, 500 °/s) / **Medium (1100 mG, 340 °/s)** / High (700 mG, 220 °/s) |
+| Flick sensitivity | Low / **Medium** / High |
 | Range past edge | 0° / 5° / **10°** / 15° / 20° / 30° |
 | Separation | 5° / 10° / **15°** / 20° / 30° |
-| Beacon near | -50 / -55 / -58 / **-62** / -65 / -68 dBm (stronger = the near spot) |
-| Beacon far | -65 / -70 / **-72** / -75 / -80 / -85 dBm (weaker = the far spot) |
-| Beacon signal | Live RSSI screen for tuning the two thresholds |
-| HA URL | Shows the current URL; change it in the Connect IQ app settings, or rebuild |
-| Reset all data | Erases spots, paints and the device list (asks "Erase all Wand data?") |
+| Beacon near | -50 / -55 / -58 / **-62** / -65 / -68 dBm |
+| Beacon far | -65 / -70 / **-72** / -75 / -80 / -85 dBm |
+| Beacon signal | Live RSSI screen |
+| HA URL | Shows the URL. Change it in the phone app or rebuild |
+| Reset all data | Erases spots, arcs and devices |
 
-All data lives on the watch in `Application.Storage`. Nothing is stored on the phone or in HA
-except the state file.
+All data lives on the watch in `Application.Storage`.
 
-## Presence-linked spots
+## Beacon spots
 
-Spot → **Presence sensor** → pick a `person.*`, a `device_tracker.*`, or an occupancy / motion /
-presence `binary_sensor` (the list comes from the last sync). When the app opens and at least
-one spot is linked, it shows "Locating…", syncs, and switches to the first spot whose sensor is
-`on` or `home`; otherwise "No presence match" and the current spot stays. This runs at most
-once a minute. Without links you switch spots with UP/DOWN.
+A Garmin watch sends no BLE adverts while the phone is connected. A room scanner in HA cannot
+see it. Wand does the reverse. The ESP32 advertises a fixed service UUID. The watch listens.
+Put the ESP32 next to one of two spots.
 
-## Beacon-linked spots
+1. Spot → **Presence sensor** → **Beacon · near** for the spot next to the ESP32. **Beacon · far**
+   for the other spot.
+2. Stand at each spot. Open Settings → **Beacon signal**. It shows the average RSSI of each 3 s
+   window.
+3. Set **Beacon near** and **Beacon far** from those numbers. Keep a gap between them. In the
+   gap, the current spot stays.
 
-A Garmin watch sends no BLE adverts while it is connected to the phone, so a room scanner in
-HA (ESPresense, `esp32_ble_tracker`) never sees it. Wand does the reverse: an ESP32 running
-ESPHome advertises a fixed BLE service UUID (`esphome/beacon-example.yaml`, six lines of
-`esp32_ble_server`), and the watch listens for it. Put the ESP32 next to one of two spots.
-
-1. Spot → **Presence sensor** → **Beacon · near** for the spot next to the ESP32, and
-   **Beacon · far** for the other spot.
-2. Stand at each spot and open Settings → **Beacon signal**. It scans back to back and shows
-   the average RSSI of each 3 s window (green = a zone, orange = between the thresholds, red =
-   not found).
-3. Set Settings → **Beacon near** (default -62 dBm) and **Beacon far** (default -72 dBm) from
-   those numbers. Keep a gap between them: in the gap the current spot stays (hysteresis).
-
-When the app opens and a spot is linked to the beacon, the aim screen shows "Locating…", listens
-for 3 s, and picks the spot. It listens again every 30 s while the aim screen is up, so a walk
-from one spot to the other changes the spot by itself. The hint line shows the last RSSI. The
-watch never connects to the beacon, and it scans only while the app is open. Status texts:
-"Beacon not found", "Between spots", "No near spot" / "No far spot" (no spot linked to that zone).
+When the app opens, it listens for 3 s and picks the spot. It listens again every 30 s while the
+main screen is up. The watch never connects to the beacon. It scans only while the app is open.
 
 ## Troubleshooting
 
 | Message | Cause | Fix |
 |---|---|---|
-| Set URL / Set URL in settings | URL or webhook id empty on the watch | Fill both in the Connect IQ phone app settings, or build with `webhook_id.txt` + `HA_URL` |
-| Phone not connected (-104) | The watch cannot reach Garmin Connect | Open Garmin Connect on the phone, check Bluetooth |
-| HTTPS required (-1001) | URL is `http://`, or the certificate is not from a public CA | Use `https://` and a Let's Encrypt (or similar) certificate; see "HTTPS is mandatory" |
-| HA timeout (-300) | The phone could not reach the URL | Phone on the home Wi-Fi? Does `ha.example.com` resolve to the LAN IP there? Proxy up? |
-| Webhook not found (404) | HA has no webhook with this id | `wand_webhook_id` in `secrets.yaml` must equal the id on the watch; restart HA after changing it |
-| Not local / denied (401 / 403) | HA rejected the call as non-local | Set `use_x_forwarded_for` + `trusted_proxies`; make sure the phone is on the LAN |
-| Wrong method (405) | Something answered the URL but not HA's webhook | Check the URL path is `/api/webhook/<id>` (the app builds it from the base URL) |
-| Bad response (-400 / -1002) | The proxy or HA returned something the phone could not parse | Check the proxy passes the request straight to HA |
-| Response too big (-402 / -403) | The state file is too large for the watch | Reduce the entity count, e.g. limit `domains` in `script.wand_sync` |
-| State file missing | The sync POST succeeded but `/local/wand/state-<id>.json` gave 404 | Is `wand.py` at `/config/bin/`? Check the HA log for `shell_command.wand_write` errors; the id must match `^[A-Za-z0-9_-]{8,128}$` |
-| Bad state file | The file exists but has no `devices` array | Delete `/config/www/wand/state-*.json` and run `script.wand_sync` again |
-| Comm error N / HTTP N | Any other Connect IQ or HTTP code | Look the code up in the Connect IQ `Communications` docs / the proxy log |
-| No compass | The watch has no heading yet | Move the arm; calibrate the compass (watch Settings → Sensors & Accessories → Compass) |
-| raw compass (main screen) | Fused heading unavailable, using the magnetometer fallback | Harmless; paint and aim the same way. Calibrate the compass if it never goes away |
-| No spot (menu) | No spot exists yet | Menu → Spots → + Add spot |
-| Nothing painted | The current spot has no painted devices | Paint a device from this spot |
-| Nothing in range | No painted arc within Range of this heading | Aim closer, raise Range, or paint the device again |
-| `Lamp / Fan?` | Two arcs are within Separation of each other | Lower Separation, repaint one device narrower, or move the spot |
-| No devices yet | Device list empty | Menu → Sync devices |
-| Too few samples | Fewer than 5 compass readings in the sweep | Keep the arm up and moving; wait for "No compass yet" to clear before START |
-| No presence match | No linked sensor is `on` / `home` | Pick the spot with UP/DOWN, or check the sensor in HA |
-| Beacon not found | No advert with the Wand service UUID in 3 s | Check the ESP32 is up and advertises (a phone BLE scanner app shows it as its ESPHome name); come closer |
-| Between spots | RSSI is between the near and far thresholds | Widen the thresholds in Settings, or move; the current spot stays |
-| No near spot / No far spot | RSSI is in a zone, but no spot is linked to it | Spot → Presence sensor → Beacon · near / far |
+| Set URL | URL or webhook id is empty | Set both in the phone app, or build with `webhook_id.txt` + `HA_URL` |
+| Phone not connected (-104) | No link to Garmin Connect | Open Garmin Connect. Check Bluetooth |
+| HTTPS required (-1001) | `http://`, or a certificate not from a public CA | Use HTTPS with a Let's Encrypt certificate |
+| HA timeout (-300) | The phone cannot reach the URL | Phone on the home Wi-Fi? Does the name resolve to the LAN IP? Proxy up? |
+| Webhook not found (404) | HA has no webhook with this id | `wand_webhook_id` in `secrets.yaml` must equal the id on the watch. Restart HA |
+| Not local / denied (401 / 403) | HA sees a non-LAN address | Set `use_x_forwarded_for` and `trusted_proxies` |
+| Wrong method (405) | The URL is not HA's webhook | Check the path is `/api/webhook/<id>` |
+| Bad response (-400 / -1002) | The phone cannot parse the answer | Check the proxy passes the request to HA unchanged |
+| Response too big (-402 / -403) | The state file is too large | Reduce `domains` in `script.wand_sync` |
+| State file missing | The GET gave 404 | Is `wand.py` in `/config/bin/`? Check the HA log for `shell_command.wand_write` |
+| Bad state file | The file has no `devices` array | Delete `/config/www/wand/state-*.json`. Run `script.wand_sync` again |
+| Comm error N / HTTP N | Other code | See the Connect IQ `Communications` docs or the proxy log |
+| No compass | No heading yet | Move the arm. Calibrate the compass (Settings → Sensors & Accessories → Compass) |
+| raw compass | Magnetometer fallback | Harmless. Calibrate the compass if it stays |
+| Nothing painted | The spot has no arcs | Paint a device |
+| Nothing in range | No arc within Range | Aim closer, raise Range, or paint again |
+| `Lamp / Fan?` | Two arcs within Separation | Lower Separation, or paint one device narrower |
+| No devices yet | Empty device list | Menu → Sync devices |
+| Too few samples | Under 5 compass readings in the sweep | Keep the arm up and moving |
+| No presence match | No linked sensor is `on` or `home` | Pick the spot with UP/DOWN |
+| Beacon not found | No advert with the Wand UUID in 3 s | Check the ESP32. Come closer |
+| Between spots | RSSI is between the thresholds | Widen the thresholds, or move |
+| No near spot / No far spot | No spot linked to that zone | Spot → Presence sensor → Beacon · near / far |
 
-HA side: a bad or unavailable entity creates the persistent notification "Wand · Unknown or
-unavailable entity …"; a domain with no handler creates "Wand · No handler for …".
+HA creates the notification "Wand · Unknown or unavailable entity" for a bad entity, and
+"Wand · No handler for …" for a domain without a handler.
 
 ## Files
 
 | File | What |
 |---|---|
-| `source/WandApp.mc` | App entry point; loads and saves the store |
-| `source/AimView.mc` | Main screen: compass ring, painted arcs, keys, trigger |
-| `source/Aim.mc` | Compass polling, magnetometer fallback, flick detector, paint sampling |
-| `source/Store.mc` | Persistence (`Application.Storage`), spots / targets / devices, matching and arc maths |
+| `source/WandApp.mc` | Entry point |
+| `source/AimView.mc` | Main screen, keys, trigger |
+| `source/Aim.mc` | Compass, magnetometer fallback, flick detector, paint sampling |
+| `source/Store.mc` | Storage, spots, arcs, devices, matching maths |
 | `source/Ha.mc` | Webhook POST, state file GET, error texts |
-| `source/PaintView.mc` | The 5-second paint sweep |
-| `source/ResultView.mc` | After-trigger screen, correction that learns |
-| `source/Menus.mc` | All menus, settings, message screen, beacon signal screen |
-| `source/Beacon.mc` | BLE beacon scan and near / far zones |
-| `manifest.xml`, `monkey.jungle` | Connect IQ app manifest (fr965, permissions Communications + Sensor + BluetoothLowEnergy) and project file |
-| `resources/settings/settings.xml` | The two Connect IQ app settings: Home Assistant URL, Webhook id |
-| `resources/strings/strings.xml`, `resources/drawables/` | App name and launcher icon |
-| `properties.template.xml` | `haUrl` / `webhookId` defaults, filled in by `build.sh` at build time |
-| `build.sh`, `install.sh`, `tools/mtpsend.c` | Build (`prg` / `sim` / `iq`) and USB sideload (libmtp sender by folder id) |
+| `source/PaintView.mc` | The 5 s paint sweep |
+| `source/ResultView.mc` | Result screen and correction |
+| `source/Menus.mc` | Menus, settings, message screen, beacon signal screen |
+| `source/Beacon.mc` | BLE beacon scan, near / far zones |
+| `manifest.xml`, `monkey.jungle` | App manifest (fr965; Communications, Sensor, BluetoothLowEnergy) and project file |
+| `resources/settings/settings.xml` | App settings: Home Assistant URL, Webhook id |
+| `resources/strings/strings.xml`, `resources/drawables/` | Name and launcher icon |
+| `properties.template.xml` | `haUrl` / `webhookId` defaults, filled by `build.sh` |
+| `build.sh`, `install.sh`, `tools/mtpsend.c` | Build (`prg` / `sim` / `iq`) and USB sideload |
 | `homeassistant/wand.yaml` | HA package: webhook automation, sync script, shell command |
-| `homeassistant/wand.py` | Writes `/config/www/wand/state-<id>.json` |
-| `esphome/beacon-example.yaml` | Optional: ESPHome BLE beacon for automatic spot detection |
-| `developer_key.*`, `webhook_id.txt` | Local secrets, git-ignored, never commit |
+| `homeassistant/wand.py` | Writes the state file |
+| `homeassistant/examples/ble-spots.yaml` | Example: spots from an ESPHome BLE scanner RSSI |
+| `esphome/beacon-example.yaml` | ESPHome BLE beacon for beacon spots |
+| `developer_key.*`, `webhook_id.txt` | Local secrets. Git-ignored |
 
-If you fork this and upload your own build to the Connect IQ Store, give it a new
-`iq:application id` UUID in `manifest.xml`.
+If you fork this and upload to the Connect IQ Store, set a new `iq:application id` UUID in
+`manifest.xml`.
 
 ## License
 
-MIT, see `LICENSE`.
+MIT. See `LICENSE`.
