@@ -210,6 +210,8 @@ account. There is no official Wand listing.
 
 If you share the beta link, build without `webhook_id.txt` and `HA_URL`. Each user sets their
 own values in the app settings.
+If you fork this and upload your own build, set a new `iq:application id` UUID in
+`manifest.xml`.
 
 ## First run
 
@@ -309,33 +311,8 @@ main screen is up. The watch never connects to the beacon. It scans only while t
 HA creates the notification "Wand · Unknown or unavailable entity" for a bad entity, and
 "Wand · No handler for …" for a domain without a handler.
 
-## Files
-
-| File | What |
-|---|---|
-| `source/WandApp.mc` | Entry point |
-| `source/AimView.mc` | Main screen, keys, trigger |
-| `source/Aim.mc` | Compass, magnetometer fallback, flick detector, paint sampling |
-| `source/Store.mc` | Storage, spots, arcs, devices, matching maths |
-| `source/Ha.mc` | Webhook POST, state file GET, error texts |
-| `source/PaintView.mc` | The 5 s paint sweep |
-| `source/ResultView.mc` | Result screen and correction |
-| `source/Menus.mc` | Menus, settings, message screen, beacon signal screen |
-| `source/Beacon.mc` | BLE beacon scan, near / far zones |
-| `manifest.xml`, `monkey.jungle` | App manifest (fr965; Communications, Sensor, BluetoothLowEnergy) and project file |
-| `resources/settings/settings.xml` | App settings: Home Assistant URL, Webhook id |
-| `resources/strings/strings.xml`, `resources/drawables/` | Name and launcher icon |
-| `properties.template.xml` | `haUrl` / `webhookId` defaults, filled by `build.sh` |
-| `build.sh`, `install.sh`, `tools/mtpsend.c` | Build (`prg` / `sim` / `iq`) and USB sideload |
-| `homeassistant/wand.yaml` | HA package: webhook automation, sync script, shell command |
-| `homeassistant/wand.py` | Writes the state file |
-| `homeassistant/examples/ble-spots.yaml` | Example: spots from an ESPHome BLE scanner RSSI |
-| `esphome/beacon-example.yaml` | ESPHome BLE beacon for beacon spots |
-| `developer_key.*`, `webhook_id.txt` | Local secrets. Git-ignored |
-
-If you fork this and upload to the Connect IQ Store, set a new `iq:application id` UUID in
-`manifest.xml`.
-
 ## License
 
 MIT. See `LICENSE`.
+
+Written with Claude Code (Claude Opus 5).
