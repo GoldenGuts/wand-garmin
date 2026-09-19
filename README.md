@@ -199,9 +199,9 @@ has `Wand-fr965.prg`, built from the tagged commit with `./build.sh release`. It
 Forerunner 965 only, and it has no Home Assistant URL and no webhook id inside. Copy it to the
 watch as described under "USB" below. Then set the URL and the webhook id: a sideloaded app does
 not show its settings in the Connect IQ phone app (only store apps do). Garmin Express on a
-computer can edit the settings of apps on the watch; if that does not work for you, build the
-app yourself with the values baked in (see "Build"). This is a binary from my machine: if you
-do not want to trust it, build from source and compare.
+computer may be able to edit them; I have not tested this. If it does not work, build the app
+yourself with the values baked in (see "Build"). This is a binary from my machine: if you do
+not want to trust it, build from source and compare.
 
 **USB.** Plug the watch in, unlock it, wait a few seconds. Run `./install.sh` (needs
 `brew install libmtp` and `clang` from the Xcode command line tools). `./install.sh build`
@@ -211,8 +211,9 @@ resolve folder paths on the Forerunner. By hand: open OpenMTP or Android File Tr
 START → scroll to "Wand".
 
 **Wireless.** Garmin has no wireless sideload. A private beta on the Connect IQ Store works. It
-skips review and is hidden from search. This is your own upload under your own developer
-account. There is no official Wand listing.
+skips review and is hidden from search. Only the developer account that uploads it can install
+it, so it is for you, not for other people. Wand is not published on the store and I do not
+plan to.
 
 1. `./build.sh store` (never `iq` for an upload: `iq` bakes your webhook id into the file).
 2. Sign in at <https://apps.garmin.com/developer/upload>. Upload `build/Wand.iq`. Fill in the
@@ -220,8 +221,6 @@ account. There is no official Wand listing.
 3. On the version, choose **Beta**. Garmin shows a beta link.
 4. Open the link on the phone. It opens in the Connect IQ app. Tap **Install**.
 
-If you share the beta link, build without `webhook_id.txt` and `HA_URL`. Each user sets their
-own values in the app settings.
 If you fork this and upload your own build, set a new `iq:application id` UUID in
 `manifest.xml`.
 
