@@ -70,6 +70,8 @@ module Menus {
     function pushPresencePicker(spotId as Number) as Void {
         var m = new WatchUi.Menu2({:title => "Presence sensor"});
         m.addItem(new WatchUi.MenuItem("None", "pick spot by hand", -1, null));
+        m.addItem(new WatchUi.MenuItem("Beacon · near", "RSSI over " + Store.bleNear.toString() + " dBm", :near, null));
+        m.addItem(new WatchUi.MenuItem("Beacon · far", "RSSI under " + Store.bleFar.toString() + " dBm", :far, null));
         for (var i = 0; i < Store.presence.size(); i++) {
             var p = Store.presence[i] as Array;
             m.addItem(new WatchUi.MenuItem(p[1] as String, (p[0] as String) + " · " + (p[2] as String), i, null));
@@ -96,6 +98,9 @@ module Menus {
         m.addItem(new WatchUi.MenuItem("Flick sensitivity", sensNames[Store.sensitivity], :sens, null));
         m.addItem(new WatchUi.MenuItem("Range", "+" + Store.rangeDeg.toString() + "° past the edge", :range, null));
         m.addItem(new WatchUi.MenuItem("Separation", Store.sepDeg.toString() + "° between devices", :sep, null));
+        m.addItem(new WatchUi.MenuItem("Beacon near", "over " + Store.bleNear.toString() + " dBm", :near, null));
+        m.addItem(new WatchUi.MenuItem("Beacon far", "under " + Store.bleFar.toString() + " dBm", :far, null));
+        m.addItem(new WatchUi.MenuItem("Beacon signal", "live RSSI, for tuning", :rssi, null));
         m.addItem(new WatchUi.MenuItem("HA URL", Ha.baseUrl(), :url, null));
         m.addItem(new WatchUi.MenuItem("Reset all data", "spots, paints, devices", :reset, null));
         WatchUi.pushView(m, new SettingsDelegate(), WatchUi.SLIDE_LEFT);
@@ -198,11 +203,7 @@ class SpotMenuDelegate extends WatchUi.Menu2InputDelegate {
             Store.save();
             Menus.pushDevicePicker("Paint which?", method(:onPaintDevice), null);
         } else if (id == :presence) {
-            if (Store.presence.size() == 0) {
-                Menus.toast("Sync devices first");
-            } else {
-                Menus.pushPresencePicker(_spotId);
-            }
+            Menus.pushPresencePicker(_spotId);
         } else if (id == :painted) {
             Menus.pushPainted(_spotId);
         } else if (id == :delete) {
@@ -294,8 +295,11 @@ class PresencePickDelegate extends WatchUi.Menu2InputDelegate {
     }
 
     function onSelect(item as WatchUi.MenuItem) as Void {
-        var i = item.getId() as Number;
-        var ent = (i < 0) ? "" : (Store.presence[i] as Array)[0] as String;
+        var id = item.getId();
+        var ent = "";
+        if (id == :near) { ent = Beacon.NEAR; }
+        else if (id == :far) { ent = Beacon.FAR; }
+        else if (id instanceof Number && (id as Number) >= 0) { ent = (Store.presence[id as Number] as Array)[0] as String; }
         Store.setSpotPresence(_spotId, ent);
         WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
         WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
@@ -335,6 +339,13 @@ class SettingsDelegate extends WatchUi.Menu2InputDelegate {
             Menus.pushChoice("Range past edge", ["0°", "5°", "10°", "15°", "20°", "30°"], [0, 5, 10, 15, 20, 30], Store.rangeDeg, method(:setRange));
         } else if (id == :sep) {
             Menus.pushChoice("Separation", ["5°", "10°", "15°", "20°", "30°"], [5, 10, 15, 20, 30], Store.sepDeg, method(:setSep));
+        } else if (id == :near) {
+            Menus.pushChoice("Near: stronger than", ["-50 dBm", "-55 dBm", "-58 dBm", "-62 dBm", "-65 dBm", "-68 dBm"], [-50, -55, -58, -62, -65, -68], Store.bleNear, method(:setNear));
+        } else if (id == :far) {
+            Menus.pushChoice("Far: weaker than", ["-65 dBm", "-70 dBm", "-72 dBm", "-75 dBm", "-80 dBm", "-85 dBm"], [-65, -70, -72, -75, -80, -85], Store.bleFar, method(:setFar));
+        } else if (id == :rssi) {
+            var v = new BeaconView();
+            WatchUi.pushView(v, new MsgDelegate(), WatchUi.SLIDE_LEFT);
         } else if (id == :url) {
             WatchUi.pushView(new MsgView("HA URL", Ha.baseUrl() + "\n\nChange it in the Connect IQ app settings, or rebuild.", null), new MsgDelegate(), WatchUi.SLIDE_LEFT);
         } else if (id == :reset) {
@@ -351,6 +362,8 @@ class SettingsDelegate extends WatchUi.Menu2InputDelegate {
     function setSens(v as Number) as Void { Store.sensitivity = v; Store.save(); refresh(); }
     function setRange(v as Number) as Void { Store.rangeDeg = v; Store.save(); refresh(); }
     function setSep(v as Number) as Void { Store.sepDeg = v; Store.save(); refresh(); }
+    function setNear(v as Number) as Void { Store.bleNear = v; if (Store.bleFar >= v) { Store.bleFar = v - 5; } Store.save(); refresh(); }
+    function setFar(v as Number) as Void { Store.bleFar = v; if (Store.bleNear <= v) { Store.bleNear = v + 5; } Store.save(); refresh(); }
 }
 
 class ResetConfirm extends WatchUi.ConfirmationDelegate {
@@ -440,5 +453,61 @@ class MsgDelegate extends WatchUi.BehaviorDelegate {
     function onSelect() as Boolean {
         WatchUi.popView(WatchUi.SLIDE_RIGHT);
         return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Live beacon signal, for tuning the near / far thresholds: scans back to back and
+// shows the average RSSI of each 3 s window and the zone it falls in.
+
+class BeaconView extends WatchUi.View {
+    private var _scanner as BeaconScanner? = null;
+    private var _rssi as Number? = null;
+    private var _scans as Number = 0;
+
+    function initialize() {
+        View.initialize();
+    }
+
+    function onShow() as Void {
+        if (_scanner == null) { _scanner = new BeaconScanner(); }
+        (_scanner as BeaconScanner).scan(method(:onScan));
+    }
+
+    function onHide() as Void {
+        if (_scanner != null) { (_scanner as BeaconScanner).stop(); }
+    }
+
+    function onScan(rssi as Number?) as Void {
+        _rssi = rssi;
+        _scans++;
+        WatchUi.requestUpdate();
+        (_scanner as BeaconScanner).scan(method(:onScan));
+    }
+
+    function onUpdate(dc as Dc) as Void {
+        var w = dc.getWidth();
+        var h = dc.getHeight();
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w / 2, 40, Graphics.FONT_SMALL, "Beacon signal", Graphics.TEXT_JUSTIFY_CENTER);
+        var big = (_scans == 0) ? "Listening..." : (_rssi == null ? "Not found" : (_rssi as Number).toString() + " dBm");
+        var zone = "";
+        var color = Graphics.COLOR_WHITE;
+        if (_rssi != null) {
+            zone = Beacon.zone(_rssi as Number);
+            color = zone.equals("") ? Graphics.COLOR_ORANGE : Graphics.COLOR_GREEN;
+            zone = zone.equals("") ? "between spots" : zone;
+        } else if (_scans > 0) {
+            color = Graphics.COLOR_RED;
+        }
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w / 2, h / 2 - 14, Graphics.FONT_LARGE, big, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w / 2, h / 2 + 26, Graphics.FONT_SMALL, zone, Graphics.TEXT_JUSTIFY_CENTER);
+        var thr = "near > " + Store.bleNear.toString() + "  far < " + Store.bleFar.toString();
+        dc.drawText(w / 2, h - 70, Graphics.FONT_XTINY, thr, Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(w / 2, h - 50, Graphics.FONT_XTINY, "scan " + _scans.toString() + " · START = back", Graphics.TEXT_JUSTIFY_CENTER);
     }
 }

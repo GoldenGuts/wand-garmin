@@ -2,6 +2,7 @@ import Toybox.Attention;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Timer;
 import Toybox.WatchUi;
 
 // Main screen: shows the current spot, the compass ring with the painted arcs
@@ -12,6 +13,9 @@ class AimView extends WatchUi.View {
     private var _status as String = "";
     private var _busy as Boolean = false;
     private var _lastLocate as Number = -999999;
+    private var _beacon as BeaconScanner? = null;
+    private var _beaconTimer as Timer.Timer? = null;
+    private const BEACON_EVERY_MS = 30000;
 
     function initialize() {
         View.initialize();
@@ -27,10 +31,30 @@ class AimView extends WatchUi.View {
             _ha = new Ha(method(:onPresenceSync));
             (_ha as Ha).sync();
         }
+        if (Store.hasBeaconSpots()) {
+            // A 3 s listen now, then again every 30 s while this screen is up, so a walk
+            // from the bed to the desk changes the spot without a menu trip.
+            _status = "Locating...";
+            beaconScan();
+            _beaconTimer = new Timer.Timer();
+            (_beaconTimer as Timer.Timer).start(method(:beaconScan), BEACON_EVERY_MS, true);
+        }
     }
 
     function onHide() as Void {
         aim.stop();
+        if (_beaconTimer != null) { (_beaconTimer as Timer.Timer).stop(); _beaconTimer = null; }
+        if (_beacon != null) { (_beacon as BeaconScanner).stop(); }
+    }
+
+    function beaconScan() as Void {
+        if (_beacon == null) { _beacon = new BeaconScanner(); }
+        (_beacon as BeaconScanner).scan(method(:onBeacon));
+    }
+
+    function onBeacon(rssi as Number?) as Void {
+        _status = Store.autoSpotBeacon(rssi);
+        WatchUi.requestUpdate();
     }
 
     function onPresenceSync(ok as Boolean, msg as String) as Void {
@@ -166,6 +190,7 @@ class AimView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
         var hint = _status.equals("") ? (Store.triggerMode == 1 ? "START or flick" : "START") : _status;
         if (_status.equals("") && aim.source.equals("mag")) { hint = hint + " · raw compass"; }
+        if (Store.hasBeaconSpots() && Beacon.lastRssi != null) { hint = hint + " · " + (Beacon.lastRssi as Number).toString() + " dBm"; }
         dc.drawText(cx, hgt - 52, Graphics.FONT_XTINY, hint, Graphics.TEXT_JUSTIFY_CENTER);
     }
 

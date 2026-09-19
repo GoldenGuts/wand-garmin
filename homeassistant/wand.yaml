@@ -41,7 +41,8 @@ script:
                                   and not (s.domain == 'script' and ' · ' in s.name) -%}
               {%- set ns.d = ns.d + [[s.entity_id, s.name, s.state]] -%}
             {%- endfor -%}
-            {%- for s in states.binary_sensor if s.attributes.device_class in ['occupancy','motion','presence'] -%}
+            {%- for s in states.binary_sensor if s.attributes.device_class in ['occupancy','motion','presence']
+                                                and s.state != 'unavailable' -%}
               {%- set ns.p = ns.p + [[s.entity_id, s.name, s.state]] -%}
             {%- endfor -%}
             {%- for s in states.person -%}

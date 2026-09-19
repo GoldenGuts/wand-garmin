@@ -4,7 +4,8 @@ import Toybox.Math;
 
 // Persistent state + the aiming maths.
 //
-// spots:    [id, name, presenceEntity]            one per place you stand
+// spots:    [id, name, presenceEntity]            one per place you stand; presenceEntity is an
+//                                                  HA sensor id, Beacon.NEAR / Beacon.FAR, or ""
 // targets:  [spotId, entityId, centerDeg, halfDeg] one painted direction per (spot, device)
 // devices:  [entityId, name, state]                synced from HA (state.json)
 // presence: [entityId, name, state]                sensors a spot can be linked to
@@ -19,6 +20,8 @@ module Store {
     var sensitivity as Number = 1;   // 0 low, 1 medium, 2 high
     var rangeDeg as Number = 10;     // extra degrees allowed beyond the painted edge
     var sepDeg as Number = 15;       // best and second best must differ by this much
+    var bleNear as Number = -62;     // beacon RSSI stronger than this = the near spot (dBm)
+    var bleFar as Number = -72;      // beacon RSSI weaker than this = the far spot (dBm)
     var lastSync as Number = 0;
 
     const PRESET_NAMES = ["Couch", "Bed", "Desk", "Kitchen", "Dining", "Door", "Bathroom", "Balcony", "Hall", "TV"];
@@ -35,6 +38,8 @@ module Store {
         v = Storage.getValue("sens");     if (v instanceof Number) { sensitivity = v; }
         v = Storage.getValue("range");    if (v instanceof Number) { rangeDeg = v; }
         v = Storage.getValue("sep");      if (v instanceof Number) { sepDeg = v; }
+        v = Storage.getValue("bleNear");  if (v instanceof Number) { bleNear = v; }
+        v = Storage.getValue("bleFar");   if (v instanceof Number) { bleFar = v; }
         v = Storage.getValue("lastSync"); if (v instanceof Number) { lastSync = v; }
         if (curSpot < 0 && spots.size() > 0) { curSpot = (spots[0] as Array)[0] as Number; }
     }
@@ -50,6 +55,8 @@ module Store {
         Storage.setValue("sens", sensitivity);
         Storage.setValue("range", rangeDeg);
         Storage.setValue("sep", sepDeg);
+        Storage.setValue("bleNear", bleNear);
+        Storage.setValue("bleFar", bleFar);
         Storage.setValue("lastSync", lastSync);
     }
 
@@ -107,18 +114,45 @@ module Store {
         save();
     }
 
+    // Any spot linked to an HA presence sensor (needs a sync to locate).
     function hasPresenceSpots() as Boolean {
         for (var i = 0; i < spots.size(); i++) {
-            if (!((spots[i] as Array)[2] as String).equals("")) { return true; }
+            var ent = (spots[i] as Array)[2] as String;
+            if (!ent.equals("") && !Beacon.isBeacon(ent)) { return true; }
         }
         return false;
+    }
+
+    // Any spot linked to the BLE beacon (needs a scan to locate).
+    function hasBeaconSpots() as Boolean {
+        for (var i = 0; i < spots.size(); i++) {
+            if (Beacon.isBeacon((spots[i] as Array)[2] as String)) { return true; }
+        }
+        return false;
+    }
+
+    // Pick the spot linked to the beacon zone of `rssi`. Returns "" on success, else why not.
+    // In the gap between the thresholds the current spot stays (hysteresis).
+    function autoSpotBeacon(rssi as Number?) as String {
+        if (rssi == null) { return "Beacon not found"; }
+        var z = Beacon.zone(rssi as Number);
+        if (z.equals("")) { return "Between spots"; }
+        var want = z.equals("near") ? Beacon.NEAR : Beacon.FAR;
+        for (var i = 0; i < spots.size(); i++) {
+            if (((spots[i] as Array)[2] as String).equals(want)) {
+                curSpot = (spots[i] as Array)[0] as Number;
+                save();
+                return "";
+            }
+        }
+        return "No " + z + " spot";
     }
 
     // Pick the first spot whose linked presence sensor says we are there.
     function autoSpot() as Boolean {
         for (var i = 0; i < spots.size(); i++) {
             var ent = (spots[i] as Array)[2] as String;
-            if (ent.equals("")) { continue; }
+            if (ent.equals("") || Beacon.isBeacon(ent)) { continue; }
             var st = presenceState(ent);
             if (st.equals("on") || st.equals("home")) {
                 curSpot = (spots[i] as Array)[0] as Number;
@@ -130,6 +164,7 @@ module Store {
     }
 
     function presenceName(entity as String) as String {
+        if (Beacon.isBeacon(entity)) { return Beacon.label(entity); }
         for (var i = 0; i < presence.size(); i++) {
             var p = presence[i] as Array;
             if ((p[0] as String).equals(entity)) { return p[1] as String; }

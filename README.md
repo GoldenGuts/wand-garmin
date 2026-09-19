@@ -73,6 +73,10 @@ true north, but it is consistent, which is all the matching needs. Headings are 
 `device_tracker`, or an occupancy/motion/presence `binary_sensor`). When the app opens (at most
 once a minute) it re-syncs and jumps to the first spot whose sensor is `on` or `home`.
 
+**Beacon-linked spots.** Or link two spots to a BLE beacon ("Beacon · near" / "Beacon · far"):
+an ESP32 running ESPHome next to one of the spots advertises a fixed service UUID, the watch
+listens for 3 s and picks the spot from the signal strength. See `esphome/beacon-example.yaml`.
+
 ## How the watch talks to Home Assistant
 
 The watch never talks to HA directly. It hands the request to Garmin Connect on the phone over
@@ -175,9 +179,9 @@ http:
    it into the watch app settings, or put it in `webhook_id.txt` for the build.
 4. Restart Home Assistant. Developer Tools → Actions → `script.wand_sync` with
    `webhook_id: <your id>` should create `/config/www/wand/state-<id>.json`.
-5. Optional: `homeassistant/examples/ble-spots.yaml` shows how one BLE scanner that reports the
-   watch's RSSI can drive two occupancy sensors ("near" / "far") with hysteresis, to pick the spot
-   automatically.
+5. Optional: `esphome/beacon-example.yaml` turns any ESP32 running ESPHome into a BLE beacon
+   for automatic spot detection (see "Beacon-linked spots" below). Nothing is needed in HA
+   for it.
 
 ## Build the watch app
 
@@ -291,6 +295,9 @@ Settings:
 | Flick sensitivity | Low (1600 mG, 500 °/s) / **Medium (1100 mG, 340 °/s)** / High (700 mG, 220 °/s) |
 | Range past edge | 0° / 5° / **10°** / 15° / 20° / 30° |
 | Separation | 5° / 10° / **15°** / 20° / 30° |
+| Beacon near | -50 / -55 / -58 / **-62** / -65 / -68 dBm (stronger = the near spot) |
+| Beacon far | -65 / -70 / **-72** / -75 / -80 / -85 dBm (weaker = the far spot) |
+| Beacon signal | Live RSSI screen for tuning the two thresholds |
 | HA URL | Shows the current URL; change it in the Connect IQ app settings, or rebuild |
 | Reset all data | Erases spots, paints and the device list (asks "Erase all Wand data?") |
 
@@ -300,10 +307,31 @@ except the state file.
 ## Presence-linked spots
 
 Spot → **Presence sensor** → pick a `person.*`, a `device_tracker.*`, or an occupancy / motion /
-presence `binary_sensor` (the list comes from the last sync; "Sync devices first" if empty).
-When the app opens and at least one spot is linked, it shows "Locating…", syncs, and switches
-to the first spot whose sensor is `on` or `home`; otherwise "No presence match" and the current
-spot stays. This runs at most once a minute. Without links you switch spots with UP/DOWN.
+presence `binary_sensor` (the list comes from the last sync). When the app opens and at least
+one spot is linked, it shows "Locating…", syncs, and switches to the first spot whose sensor is
+`on` or `home`; otherwise "No presence match" and the current spot stays. This runs at most
+once a minute. Without links you switch spots with UP/DOWN.
+
+## Beacon-linked spots
+
+A Garmin watch sends no BLE adverts while it is connected to the phone, so a room scanner in
+HA (ESPresense, `esp32_ble_tracker`) never sees it. Wand does the reverse: an ESP32 running
+ESPHome advertises a fixed BLE service UUID (`esphome/beacon-example.yaml`, six lines of
+`esp32_ble_server`), and the watch listens for it. Put the ESP32 next to one of two spots.
+
+1. Spot → **Presence sensor** → **Beacon · near** for the spot next to the ESP32, and
+   **Beacon · far** for the other spot.
+2. Stand at each spot and open Settings → **Beacon signal**. It scans back to back and shows
+   the average RSSI of each 3 s window (green = a zone, orange = between the thresholds, red =
+   not found).
+3. Set Settings → **Beacon near** (default -62 dBm) and **Beacon far** (default -72 dBm) from
+   those numbers. Keep a gap between them: in the gap the current spot stays (hysteresis).
+
+When the app opens and a spot is linked to the beacon, the aim screen shows "Locating…", listens
+for 3 s, and picks the spot. It listens again every 30 s while the aim screen is up, so a walk
+from one spot to the other changes the spot by itself. The hint line shows the last RSSI. The
+watch never connects to the beacon, and it scans only while the app is open. Status texts:
+"Beacon not found", "Between spots", "No near spot" / "No far spot" (no spot linked to that zone).
 
 ## Troubleshooting
 
@@ -330,6 +358,9 @@ spot stays. This runs at most once a minute. Without links you switch spots with
 | No devices yet | Device list empty | Menu → Sync devices |
 | Too few samples | Fewer than 5 compass readings in the sweep | Keep the arm up and moving; wait for "No compass yet" to clear before START |
 | No presence match | No linked sensor is `on` / `home` | Pick the spot with UP/DOWN, or check the sensor in HA |
+| Beacon not found | No advert with the Wand service UUID in 3 s | Check the ESP32 is up and advertises (a phone BLE scanner app shows it as its ESPHome name); come closer |
+| Between spots | RSSI is between the near and far thresholds | Widen the thresholds in Settings, or move; the current spot stays |
+| No near spot / No far spot | RSSI is in a zone, but no spot is linked to it | Spot → Presence sensor → Beacon · near / far |
 
 HA side: a bad or unavailable entity creates the persistent notification "Wand · Unknown or
 unavailable entity …"; a domain with no handler creates "Wand · No handler for …".
@@ -345,15 +376,16 @@ unavailable entity …"; a domain with no handler creates "Wand · No handler fo
 | `source/Ha.mc` | Webhook POST, state file GET, error texts |
 | `source/PaintView.mc` | The 5-second paint sweep |
 | `source/ResultView.mc` | After-trigger screen, correction that learns |
-| `source/Menus.mc` | All menus, settings, message screen |
-| `manifest.xml`, `monkey.jungle` | Connect IQ app manifest (fr965, permissions Communications + Sensor) and project file |
+| `source/Menus.mc` | All menus, settings, message screen, beacon signal screen |
+| `source/Beacon.mc` | BLE beacon scan and near / far zones |
+| `manifest.xml`, `monkey.jungle` | Connect IQ app manifest (fr965, permissions Communications + Sensor + BluetoothLowEnergy) and project file |
 | `resources/settings/settings.xml` | The two Connect IQ app settings: Home Assistant URL, Webhook id |
 | `resources/strings/strings.xml`, `resources/drawables/` | App name and launcher icon |
 | `properties.template.xml` | `haUrl` / `webhookId` defaults, filled in by `build.sh` at build time |
 | `build.sh`, `install.sh` | Build (`prg` / `sim` / `iq`) and USB sideload |
 | `homeassistant/wand.yaml` | HA package: webhook automation, sync script, shell command |
 | `homeassistant/wand.py` | Writes `/config/www/wand/state-<id>.json` |
-| `homeassistant/examples/ble-spots.yaml` | Optional: spot detection from BLE RSSI |
+| `esphome/beacon-example.yaml` | Optional: ESPHome BLE beacon for automatic spot detection |
 | `developer_key.*`, `webhook_id.txt` | Local secrets, git-ignored, never commit |
 
 If you fork this and upload your own build to the Connect IQ Store, give it a new

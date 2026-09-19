@@ -1,0 +1,26 @@
+# Example: a BLE beacon for automatic spot detection.
+#
+# A Garmin watch sends no BLE adverts while it is connected to the phone, so a room scanner
+# (esp32_ble_tracker, ESPresense, ...) never sees it. Wand works the other way round: any
+# ESP32 running ESPHome advertises this fixed service UUID, and the watch listens for it for
+# 3 seconds when the app opens (and every 30 s while the aim screen is up) and averages the
+# RSSI. A strong signal means the spot next to the beacon, a weak one the spot further away.
+# The watch never connects to the beacon; the characteristic only names it.
+#
+# Add this block to the config of any ESP32 you already run (a voice satellite, a sensor
+# node), or flash a bare board with it. Then on the watch: Spot -> Presence sensor ->
+# "Beacon · near" for the spot next to the ESP32 and "Beacon · far" for the other spot.
+# Settings -> "Beacon signal" shows the live RSSI at each spot; set "Beacon near" /
+# "Beacon far" from those numbers, leaving a gap (hysteresis) between them.
+#
+# One beacon gives distance only, so it tells two spots apart. Do not change the UUIDs:
+# the watch app scans for exactly these.
+
+esp32_ble_server:
+  services:
+    - uuid: 7a4d0001-9b2e-4c8f-8f1a-5e6b7c8d9e0f
+      advertise: true
+      characteristics:
+        - uuid: 7a4d0002-9b2e-4c8f-8f1a-5e6b7c8d9e0f
+          read: true
+          value: "wand"
